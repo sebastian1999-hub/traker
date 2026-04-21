@@ -242,10 +242,75 @@ function buildFloorChart(data) {
 }
 
 function mountTables(data) {
+  const detailCharacterSelect = document.getElementById("detailCharacterSelect");
+  const characterOptions = [
+    { key: "ALL", label: "ALL CHARACTERS" },
+    ...data.overview.by_character.map((c) => ({ key: c.character, label: c.character_name || c.character })),
+  ];
+
+  detailCharacterSelect.innerHTML = characterOptions
+    .map((c) => `<option value="${c.key}">${c.label}</option>`)
+    .join("");
+
+  const renderDetailTables = (selectedCharacter) => {
+    const encounterRows =
+      selectedCharacter === "ALL"
+        ? data.encounter_stats
+        : data.encounter_stats_by_character[selectedCharacter] || [];
+
+    const cardRows =
+      selectedCharacter === "ALL"
+        ? data.card_stats
+        : data.card_stats_by_character[selectedCharacter] || [];
+
+    const relicRows =
+      selectedCharacter === "ALL"
+        ? data.relic_stats
+        : data.relic_stats_by_character[selectedCharacter] || [];
+
+    createTable(
+      "encounterTable",
+      [
+        { label: "Encounter", value: (r) => r.encounter_name, format: (v) => v },
+        { label: "Visitas", value: (r) => r.visits, format: (v) => fmtNum(v) },
+        { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
+      ],
+      encounterRows.slice(0, 40),
+      1,
+      "desc"
+    );
+
+    createTable(
+      "cardTable",
+      [
+        { label: "Carta", value: (r) => r.name, format: (v) => v },
+        { label: "Runs", value: (r) => r.runs_with, format: (v) => fmtNum(v) },
+        { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
+        { label: "Copias avg", value: (r) => r.avg_copies, format: (v) => Number(v).toFixed(2) },
+      ],
+      cardRows.slice(0, 40),
+      1,
+      "desc"
+    );
+
+    createTable(
+      "relicTable",
+      [
+        { label: "Reliquia", value: (r) => r.name, format: (v) => v },
+        { label: "Runs", value: (r) => r.runs_with, format: (v) => fmtNum(v) },
+        { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
+        { label: "Copias avg", value: (r) => r.avg_copies, format: (v) => Number(v).toFixed(2) },
+      ],
+      relicRows.slice(0, 40),
+      1,
+      "desc"
+    );
+  };
+
   createTable(
     "roomTypeTable",
     [
-      { label: "Tipo", value: (r) => r.room_type, format: (v) => v },
+      { label: "Tipo", value: (r) => r.room_type_name, format: (v) => v },
       { label: "Visitas", value: (r) => r.visits, format: (v) => fmtNum(v) },
       { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
     ],
@@ -254,53 +319,21 @@ function mountTables(data) {
     "desc"
   );
 
-  createTable(
-    "encounterTable",
-    [
-      { label: "Encounter", value: (r) => r.encounter, format: (v) => v },
-      { label: "Visitas", value: (r) => r.visits, format: (v) => fmtNum(v) },
-      { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
-    ],
-    data.encounter_stats.slice(0, 25),
-    1,
-    "desc"
-  );
+  renderDetailTables("ALL");
 
-  createTable(
-    "cardTable",
-    [
-      { label: "Carta", value: (r) => r.id, format: (v) => v },
-      { label: "Runs", value: (r) => r.runs_with, format: (v) => fmtNum(v) },
-      { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
-      { label: "Copias avg", value: (r) => r.avg_copies, format: (v) => Number(v).toFixed(2) },
-    ],
-    data.card_stats.slice(0, 25),
-    1,
-    "desc"
-  );
-
-  createTable(
-    "relicTable",
-    [
-      { label: "Reliquia", value: (r) => r.id, format: (v) => v },
-      { label: "Runs", value: (r) => r.runs_with, format: (v) => fmtNum(v) },
-      { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
-      { label: "Copias avg", value: (r) => r.avg_copies, format: (v) => Number(v).toFixed(2) },
-    ],
-    data.relic_stats.slice(0, 25),
-    1,
-    "desc"
-  );
+  detailCharacterSelect.addEventListener("change", (e) => {
+    renderDetailTables(e.target.value);
+  });
 
   createTable(
     "runsTable",
     [
       { label: "Run ID", value: (r) => r.run_id, format: (v) => v },
-      { label: "Character", value: (r) => r.character, format: (v) => v },
+      { label: "Character", value: (r) => r.character_name || r.character, format: (v) => v },
       { label: "Asc", value: (r) => r.ascension, format: (v) => v },
       { label: "Floor", value: (r) => r.floor_reached, format: (v) => v },
       { label: "Win", value: (r) => (r.win ? 1 : 0), format: (v) => (v ? "YES" : "NO") },
-      { label: "Killed By", value: (r) => r.killed_by_encounter || "-", format: (v) => v },
+      { label: "Killed By", value: (r) => r.killed_by_encounter_name || "-", format: (v) => v },
     ],
     [...data.runs].reverse().slice(0, 40),
     0,

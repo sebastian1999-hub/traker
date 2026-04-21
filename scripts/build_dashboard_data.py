@@ -8,6 +8,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+CHARACTER_LABELS = {
+    "IRONCLAD": "Ironclad",
+    "SILENT": "Silent",
+    "DEFECT": "Defect",
+    "REGENT": "Regent",
+    "NECROBINDER": "Necrobinder",
+}
+
+ROOM_TYPE_LABELS = {
+    "monster": "Monster",
+    "event": "Event",
+    "rest_site": "Rest Site",
+    "shop": "Shop",
+    "elite": "Elite",
+    "treasure": "Treasure",
+    "boss": "Boss",
+    "unknown": "Unknown",
+    "ancient": "Ancient",
+    "UNKNOWN": "Unknown",
+}
+
+
 def default_history_glob() -> str:
     user_profile = os.environ.get("USERPROFILE")
     if not user_profile:
@@ -37,6 +59,24 @@ def simplify_character(raw):
     if "." in text:
         return text.split(".", 1)[1]
     return text
+
+
+def character_label(character_key):
+    return CHARACTER_LABELS.get(character_key, title_from_token(character_key))
+
+
+def title_from_token(token):
+    text = normalize_id(token)
+    text = text.split(".")[-1]
+    text = text.replace("-", "_")
+    parts = [p for p in text.split("_") if p]
+    if not parts:
+        return text
+    return " ".join(p.capitalize() for p in parts)
+
+
+def item_name(raw_id):
+    return title_from_token(raw_id)
 
 
 def epoch_to_iso(epoch_value):
@@ -82,13 +122,21 @@ def finalize_presence_stats(stats_map):
         rows.append(
             {
                 "id": key,
+                "name": item_name(key),
                 "runs_with": runs,
                 "win_rate": round((wins / runs) * 100, 2) if runs else 0.0,
                 "avg_copies": round(copies_total / runs, 2) if runs else 0.0,
             }
         )
-    rows.sort(key=lambda x: (-x["runs_with"], -x["win_rate"], x["id"]))
+    rows.sort(key=lambda x: (-x["runs_with"], -x["win_rate"], x["name"]))
     return rows
+
+
+def finalize_presence_stats_by_character(stats_map):
+    output = {}
+    for character_key, char_map in stats_map.items():
+        output[character_key] = finalize_presence_stats(char_map)
+    return output
 
 
 def cumulative_series(runs, key_selector):
@@ -144,9 +192,13 @@ def main():
 
     encounter_counter = Counter()
     encounter_win_counter = Counter()
+    encounter_counter_by_character = defaultdict(Counter)
+    encounter_win_counter_by_character = defaultdict(Counter)
 
     card_presence = defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0})
     relic_presence = defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0})
+    card_presence_by_character = defaultdict(lambda: defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0}))
+    relic_presence_by_character = defaultdict(lambda: defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0}))
 
     for run_path in run_files:
         with open(run_path, "r", encoding="utf-8") as f:
@@ -172,13 +224,16 @@ def main():
             "run_time_seconds": run_time,
             "run_time_minutes": round((run_time or 0) / 60.0, 2) if run_time is not None else None,
             "character": character,
+            "character_name": character_label(character),
             "ascension": ascension,
             "build_id": data.get("build_id"),
             "game_mode": data.get("game_mode"),
             "win": win,
             "was_abandoned": bool(data.get("was_abandoned", False)),
             "killed_by_encounter": data.get("killed_by_encounter"),
+            "killed_by_encounter_name": item_name(data.get("killed_by_encounter")),
             "killed_by_event": data.get("killed_by_event"),
+            "killed_by_event_name": item_name(data.get("killed_by_event")),
             "acts": [simplify_character(a) for a in data.get("acts", [])],
             "floor_reached": floor_reached,
             "deck_count": len(p0.get("deck") or []),
@@ -207,6 +262,8 @@ def main():
             if model and model != "?" and model != "UNKNOWN":
                 encounter_counter[model] += 1
                 encounter_win_counter[model] += 1 if win else 0
+                encounter_counter_by_character[character][model] += 1
+                encounter_win_counter_by_character[character][model] += 1 if win else 0
 
         deck_counter = Counter()
         for c in p0.get("deck") or []:
@@ -217,6 +274,10 @@ def main():
             card_presence[cid]["copies_total"] += copies
             card_presence[cid]["wins"] += 1 if win else 0
 
+            card_presence_by_character[character][cid]["runs"] += 1
+            card_presence_by_character[character][cid]["copies_total"] += copies
+            card_presence_by_character[character][cid]["wins"] += 1 if win else 0
+
         relic_counter = Counter()
         for r in p0.get("relics") or []:
             if isinstance(r, dict):
@@ -225,6 +286,10 @@ def main():
             relic_presence[rid]["runs"] += 1
             relic_presence[rid]["copies_total"] += copies
             relic_presence[rid]["wins"] += 1 if win else 0
+
+            relic_presence_by_character[character][rid]["runs"] += 1
+            relic_presence_by_character[character][rid]["copies_total"] += copies
+            relic_presence_by_character[character][rid]["wins"] += 1 if win else 0
 
     runs.sort(key=lambda r: (r["start_time"] or 0, r["run_id"]))
 
@@ -242,6 +307,7 @@ def main():
         by_character.append(
             {
                 "character": character,
+                "character_name": character_label(character),
                 "runs": count,
                 "wins": wins,
                 "win_rate": round((wins / count) * 100, 2) if count else 0.0,
@@ -284,11 +350,12 @@ def main():
         room_stats.append(
             {
                 "room_type": room_type,
+                "room_type_name": ROOM_TYPE_LABELS.get(room_type, title_from_token(room_type)),
                 "visits": visits,
                 "win_rate": round((wins / visits) * 100, 2) if visits else 0.0,
             }
         )
-    room_stats.sort(key=lambda x: (-x["visits"], -x["win_rate"], x["room_type"]))
+    room_stats.sort(key=lambda x: (-x["visits"], -x["win_rate"], x["room_type_name"]))
 
     encounter_stats = []
     for model, visits in encounter_counter.items():
@@ -296,11 +363,28 @@ def main():
         encounter_stats.append(
             {
                 "encounter": model,
+                "encounter_name": item_name(model),
                 "visits": visits,
                 "win_rate": round((wins / visits) * 100, 2) if visits else 0.0,
             }
         )
-    encounter_stats.sort(key=lambda x: (-x["visits"], -x["win_rate"], x["encounter"]))
+    encounter_stats.sort(key=lambda x: (-x["visits"], -x["win_rate"], x["encounter_name"]))
+
+    encounter_stats_by_character = {}
+    for character_key, c_counter in encounter_counter_by_character.items():
+        rows = []
+        for model, visits in c_counter.items():
+            wins = encounter_win_counter_by_character[character_key][model]
+            rows.append(
+                {
+                    "encounter": model,
+                    "encounter_name": item_name(model),
+                    "visits": visits,
+                    "win_rate": round((wins / visits) * 100, 2) if visits else 0.0,
+                }
+            )
+        rows.sort(key=lambda x: (-x["visits"], -x["win_rate"], x["encounter_name"]))
+        encounter_stats_by_character[character_key] = rows
 
     output = {
         "meta": {
@@ -325,8 +409,11 @@ def main():
         "floor_stats": floor_stats,
         "room_type_stats": room_stats,
         "encounter_stats": encounter_stats,
+        "encounter_stats_by_character": encounter_stats_by_character,
         "card_stats": finalize_presence_stats(card_presence),
+        "card_stats_by_character": finalize_presence_stats_by_character(card_presence_by_character),
         "relic_stats": finalize_presence_stats(relic_presence),
+        "relic_stats_by_character": finalize_presence_stats_by_character(relic_presence_by_character),
         "runs": runs,
     }
 

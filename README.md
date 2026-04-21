@@ -25,12 +25,12 @@ Si solo quieres refrescar datos:
 
 Si lo quieres ver online igual que local:
 
-1. Sube **todo** el contenido de esta carpeta a un repo nuevo (por ejemplo `sts2-dashboard`).
-2. En GitHub: `Settings` -> `Pages`.
-3. En `Build and deployment`, elige `Deploy from a branch`.
-4. Branch: `main`, folder: `/ (root)`.
-5. Guarda y espera 1-2 minutos.
-6. Tu web quedara en: `https://TU_USUARIO.github.io/sts2-dashboard/`.
+1. Este repo ya incluye workflow de Pages en `.github/workflows/pages.yml`.
+2. Haz push a `main`.
+3. En GitHub: `Settings` -> `Pages`.
+4. En `Build and deployment`, selecciona `Source: GitHub Actions`.
+5. Espera a que termine el workflow `Deploy static dashboard to GitHub Pages`.
+6. Tu web quedara en: `https://TU_USUARIO.github.io/traker/`.
 
 ## Como mantenerlo actualizado en GitHub
 

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>STS2 Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="bg-shape bg-shape-a"></div>
+  <div class="bg-shape bg-shape-b"></div>
+
+  <header class="hero">
+    <h1>Slay the Spire 2 Stats Lab</h1>
+    <p class="sub">Dashboard generado automaticamente desde tus archivos .run</p>
+    <div id="metaLine" class="meta-line">Cargando datos...</div>
+  </header>
+
+  <main class="layout">
+    <section class="kpis" id="kpis"></section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Winrate Over Time</h2>
+        <select id="characterSelect"></select>
+      </div>
+      <canvas id="winrateChart"></canvas>
+    </section>
+
+    <section class="panel grid-2">
+      <div>
+        <h2>Winrate Por Personaje</h2>
+        <canvas id="characterChart"></canvas>
+      </div>
+      <div>
+        <h2>Runs Por Ascension</h2>
+        <canvas id="ascensionChart"></canvas>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Stats Por Piso</h2>
+      <canvas id="floorChart"></canvas>
+    </section>
+
+    <section class="panel grid-2">
+      <div>
+        <h2>Tipo de Sala</h2>
+        <table id="roomTypeTable"></table>
+      </div>
+      <div>
+        <h2>Encuentros Mas Frecuentes</h2>
+        <table id="encounterTable"></table>
+      </div>
+    </section>
+
+    <section class="panel grid-2">
+      <div>
+        <h2>Cartas (top 25)</h2>
+        <table id="cardTable"></table>
+      </div>
+      <div>
+        <h2>Reliquias (top 25)</h2>
+        <table id="relicTable"></table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Historial Reciente</h2>
+      <table id="runsTable"></table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

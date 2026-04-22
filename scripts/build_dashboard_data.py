@@ -17,17 +17,14 @@ CHARACTER_LABELS = {
 }
 
 ROOM_TYPE_LABELS = {
-    "monster": "Monster",
-    "event": "Event",
-    "rest_site": "Rest Site",
-    "shop": "Shop",
+    "normal": "Normal",
     "elite": "Elite",
-    "treasure": "Treasure",
     "boss": "Boss",
-    "unknown": "Unknown",
-    "ancient": "Ancient",
-    "UNKNOWN": "Unknown",
+    "random_fight": "Random Fight",
 }
+
+CHARACTER_SUFFIXES = ("_IRONCLAD", "_SILENT", "_DEFECT", "_REGENT", "_NECROBINDER")
+ENCOUNTER_SUFFIXES = ("_WEAK", "_NORMAL", "_ELITE", "_BOSS")
 
 
 def default_history_glob() -> str:
@@ -75,8 +72,43 @@ def title_from_token(token):
     return " ".join(p.capitalize() for p in parts)
 
 
+def trim_card_token(token):
+    text = token
+    if text.startswith("SETUP_"):
+        text = text[len("SETUP_") :]
+    for suffix in CHARACTER_SUFFIXES:
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text
+
+
+def trim_encounter_token(token):
+    text = token
+    for suffix in ENCOUNTER_SUFFIXES:
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text
+
+
 def item_name(raw_id):
-    return title_from_token(raw_id)
+    text = normalize_id(raw_id)
+    if text in ("NONE.NONE", "UNKNOWN", "?"):
+        return "-"
+
+    if text.startswith("CARD."):
+        return title_from_token(trim_card_token(text.split(".", 1)[1]))
+    if text.startswith("RELIC."):
+        return title_from_token(text.split(".", 1)[1])
+    if text.startswith("ENCOUNTER."):
+        return title_from_token(trim_encounter_token(text.split(".", 1)[1]))
+    if text.startswith("EVENT."):
+        return title_from_token(text.split(".", 1)[1])
+    if text.startswith("POTION."):
+        return title_from_token(text.split(".", 1)[1])
+
+    return title_from_token(text)
 
 
 def epoch_to_iso(epoch_value):
@@ -113,12 +145,35 @@ def to_floor_rows(map_point_history):
     return rows
 
 
-def finalize_presence_stats(stats_map):
+def combat_room_bucket(room_type, model_id):
+    rt = normalize_id(room_type).lower()
+    model = normalize_id(model_id)
+    is_fight = model.startswith("ENCOUNTER.")
+
+    if rt == "boss" and is_fight:
+        return "boss"
+    if rt == "elite" and is_fight:
+        return "elite"
+    if rt == "monster" and is_fight:
+        return "normal"
+    if is_fight:
+        return "random_fight"
+    return None
+
+
+def finalize_presence_stats(stats_map, offer_counter=None, pick_counter=None):
+    offer_counter = offer_counter or Counter()
+    pick_counter = pick_counter or Counter()
+
+    all_keys = set(stats_map.keys()) | set(offer_counter.keys()) | set(pick_counter.keys())
     rows = []
-    for key, values in stats_map.items():
+    for key in all_keys:
+        values = stats_map.get(key, {"runs": 0, "wins": 0, "copies_total": 0})
         runs = values["runs"]
         wins = values["wins"]
         copies_total = values["copies_total"]
+        offered = offer_counter.get(key, 0)
+        picked = pick_counter.get(key, 0)
         rows.append(
             {
                 "id": key,
@@ -126,16 +181,26 @@ def finalize_presence_stats(stats_map):
                 "runs_with": runs,
                 "win_rate": round((wins / runs) * 100, 2) if runs else 0.0,
                 "avg_copies": round(copies_total / runs, 2) if runs else 0.0,
+                "offered": offered,
+                "picked": picked,
+                "pick_rate": round((picked / offered) * 100, 2) if offered else 0.0,
             }
         )
-    rows.sort(key=lambda x: (-x["runs_with"], -x["win_rate"], x["name"]))
+    rows.sort(key=lambda x: (-x["offered"], -x["picked"], -x["runs_with"], x["name"]))
     return rows
 
 
-def finalize_presence_stats_by_character(stats_map):
+def finalize_presence_stats_by_character(stats_map, offer_map=None, pick_map=None):
+    offer_map = offer_map or defaultdict(Counter)
+    pick_map = pick_map or defaultdict(Counter)
     output = {}
-    for character_key, char_map in stats_map.items():
-        output[character_key] = finalize_presence_stats(char_map)
+    all_characters = set(stats_map.keys()) | set(offer_map.keys()) | set(pick_map.keys())
+    for character_key in all_characters:
+        output[character_key] = finalize_presence_stats(
+            stats_map.get(character_key, {}),
+            offer_map.get(character_key, Counter()),
+            pick_map.get(character_key, Counter()),
+        )
     return output
 
 
@@ -199,6 +264,14 @@ def main():
     relic_presence = defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0})
     card_presence_by_character = defaultdict(lambda: defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0}))
     relic_presence_by_character = defaultdict(lambda: defaultdict(lambda: {"runs": 0, "wins": 0, "copies_total": 0}))
+    card_offer_counter = Counter()
+    card_pick_counter = Counter()
+    relic_offer_counter = Counter()
+    relic_pick_counter = Counter()
+    card_offer_counter_by_character = defaultdict(Counter)
+    card_pick_counter_by_character = defaultdict(Counter)
+    relic_offer_counter_by_character = defaultdict(Counter)
+    relic_pick_counter_by_character = defaultdict(Counter)
 
     for run_path in run_files:
         with open(run_path, "r", encoding="utf-8") as f:
@@ -254,16 +327,52 @@ def main():
             floor_win_counter[floor] += 1 if win else 0
 
         for fr in floor_rows:
-            rt = fr["room_type"]
-            room_type_counter[rt] += 1
-            room_type_win_counter[rt] += 1 if win else 0
-
             model = fr["model_id"]
+            combat_bucket = combat_room_bucket(fr["room_type"], model)
+            if combat_bucket:
+                room_type_counter[combat_bucket] += 1
+                room_type_win_counter[combat_bucket] += 1 if win else 0
+
             if model and model != "?" and model != "UNKNOWN":
                 encounter_counter[model] += 1
                 encounter_win_counter[model] += 1 if win else 0
                 encounter_counter_by_character[character][model] += 1
                 encounter_win_counter_by_character[character][model] += 1 if win else 0
+
+        for act in data.get("map_point_history", []):
+            if not isinstance(act, list):
+                continue
+            for point in act:
+                if not isinstance(point, dict):
+                    continue
+                for ps in point.get("player_stats", []):
+                    if not isinstance(ps, dict):
+                        continue
+
+                    for option in ps.get("card_choices", []):
+                        if not isinstance(option, dict):
+                            continue
+                        card_obj = option.get("card") or {}
+                        card_id = normalize_id(card_obj.get("id"))
+                        if card_id in ("UNKNOWN", "NONE.NONE"):
+                            continue
+                        card_offer_counter[card_id] += 1
+                        card_offer_counter_by_character[character][card_id] += 1
+                        if option.get("was_picked"):
+                            card_pick_counter[card_id] += 1
+                            card_pick_counter_by_character[character][card_id] += 1
+
+                    for option in ps.get("relic_choices", []):
+                        if not isinstance(option, dict):
+                            continue
+                        relic_id = normalize_id(option.get("choice"))
+                        if relic_id in ("UNKNOWN", "NONE.NONE"):
+                            continue
+                        relic_offer_counter[relic_id] += 1
+                        relic_offer_counter_by_character[character][relic_id] += 1
+                        if option.get("was_picked"):
+                            relic_pick_counter[relic_id] += 1
+                            relic_pick_counter_by_character[character][relic_id] += 1
 
         deck_counter = Counter()
         for c in p0.get("deck") or []:
@@ -410,10 +519,18 @@ def main():
         "room_type_stats": room_stats,
         "encounter_stats": encounter_stats,
         "encounter_stats_by_character": encounter_stats_by_character,
-        "card_stats": finalize_presence_stats(card_presence),
-        "card_stats_by_character": finalize_presence_stats_by_character(card_presence_by_character),
-        "relic_stats": finalize_presence_stats(relic_presence),
-        "relic_stats_by_character": finalize_presence_stats_by_character(relic_presence_by_character),
+        "card_stats": finalize_presence_stats(card_presence, card_offer_counter, card_pick_counter),
+        "card_stats_by_character": finalize_presence_stats_by_character(
+            card_presence_by_character,
+            card_offer_counter_by_character,
+            card_pick_counter_by_character,
+        ),
+        "relic_stats": finalize_presence_stats(relic_presence, relic_offer_counter, relic_pick_counter),
+        "relic_stats_by_character": finalize_presence_stats_by_character(
+            relic_presence_by_character,
+            relic_offer_counter_by_character,
+            relic_pick_counter_by_character,
+        ),
         "runs": runs,
     }
 

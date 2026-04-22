@@ -15,6 +15,31 @@ function fmtNum(v) {
   return Number(v || 0).toLocaleString("es-ES");
 }
 
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function relicSpritePath(relicId) {
+  const raw = String(relicId ?? "");
+  const token = raw.includes(".") ? raw.split(".")[1] : raw;
+  const slug = token
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `sprites/relics/${slug}.png`;
+}
+
+function renderRelicNameCell(_value, row) {
+  const name = escapeHtml(row.name || row.id || "-");
+  const iconPath = relicSpritePath(row.id);
+  return `<span class="relic-name-cell"><img class="relic-icon" src="${iconPath}" alt="${name}" loading="lazy" onerror="this.style.display='none'" /><span>${name}</span></span>`;
+}
+
 function compareValues(a, b) {
   const av = a ?? "";
   const bv = b ?? "";
@@ -34,44 +59,119 @@ function compareValues(a, b) {
   });
 }
 
-function createTable(elId, columns, rows, defaultSortIndex = null, defaultDirection = "desc") {
+function createTable(
+  elId,
+  columns,
+  rows,
+  defaultSortIndex = null,
+  defaultDirection = "desc",
+  pageSize = 12
+) {
   const table = document.getElementById(elId);
+  const pagerId = `${elId}Pager`;
+  let pager = document.getElementById(pagerId);
+  if (!pager) {
+    pager = document.createElement("div");
+    pager.id = pagerId;
+    pager.className = "table-pager";
+    table.insertAdjacentElement("afterend", pager);
+  }
+
   const sortState = {
-    index: defaultSortIndex,
-    direction: defaultDirection,
+    rules:
+      defaultSortIndex === null || defaultSortIndex === undefined
+        ? []
+        : [{ index: defaultSortIndex, direction: defaultDirection }],
+  };
+  const pageState = {
+    current: 1,
+    size: Math.max(1, Number(pageSize) || 12),
+  };
+
+  const findRuleIndex = (idx) => sortState.rules.findIndex((r) => r.index === idx);
+
+  const toggleRule = (idx, additive = true) => {
+    const existing = findRuleIndex(idx);
+
+    if (additive) {
+      if (existing === -1) {
+        sortState.rules.push({ index: idx, direction: "desc" });
+      } else {
+        const dir = sortState.rules[existing].direction;
+        if (dir === "desc") {
+          sortState.rules[existing].direction = "asc";
+        } else {
+          sortState.rules.splice(existing, 1);
+        }
+      }
+      return;
+    }
+
+    if (sortState.rules.length === 1 && existing === 0) {
+      const dir = sortState.rules[0].direction;
+      if (dir === "desc") {
+        sortState.rules[0].direction = "asc";
+      } else {
+        sortState.rules = [];
+      }
+      return;
+    }
+
+    if (existing !== -1) {
+      const dir = sortState.rules[existing].direction;
+      sortState.rules = [{ index: idx, direction: dir === "desc" ? "asc" : "desc" }];
+    } else {
+      sortState.rules = [{ index: idx, direction: "desc" }];
+    }
   };
 
   const sortRows = () => {
     const sorted = [...rows];
-    if (sortState.index === null || sortState.index === undefined) {
+    if (!sortState.rules.length) {
       return sorted;
     }
 
-    const col = columns[sortState.index];
     sorted.sort((ra, rb) => {
-      const cmp = compareValues(col.value(ra), col.value(rb));
-      return sortState.direction === "asc" ? cmp : -cmp;
+      for (const rule of sortState.rules) {
+        const col = columns[rule.index];
+        const cmp = compareValues(col.value(ra), col.value(rb));
+        if (cmp !== 0) {
+          return rule.direction === "asc" ? cmp : -cmp;
+        }
+      }
+      return 0;
     });
     return sorted;
   };
 
   const render = () => {
     const sortedRows = sortRows();
+    const totalRows = sortedRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageState.size));
+    if (pageState.current > totalPages) {
+      pageState.current = totalPages;
+    }
+
+    const start = (pageState.current - 1) * pageState.size;
+    const pageRows = sortedRows.slice(start, start + pageState.size);
+
     const head = `
       <thead>
         <tr>
           ${columns
             .map((c, idx) => {
-              const active = sortState.index === idx;
-              const marker = active ? (sortState.direction === "desc" ? " ▼" : " ▲") : "";
-              return `<th class="sortable" data-col-index="${idx}">${c.label}${marker}</th>`;
+              const rulePos = findRuleIndex(idx);
+              const active = rulePos !== -1;
+              const marker = active ? (sortState.rules[rulePos].direction === "desc" ? " ▼" : " ▲") : "";
+              const priority = active ? `<span class="sort-priority">${rulePos + 1}</span>` : "";
+              return `<th class="sortable" data-col-index="${idx}">${c.label}${marker}${priority}</th>`;
             })
             .join("")}
         </tr>
       </thead>
     `;
 
-    const bodyRows = sortedRows
+    const bodyRows = pageRows
       .map(
         (row) =>
           `<tr>${columns
@@ -81,16 +181,44 @@ function createTable(elId, columns, rows, defaultSortIndex = null, defaultDirect
       .join("");
 
     table.innerHTML = `${head}<tbody>${bodyRows}</tbody>`;
+    const sortHint = sortState.rules.length
+      ? sortState.rules
+          .map((r, i) => `${i + 1}. ${columns[r.index].label} ${r.direction === "desc" ? "desc" : "asc"}`)
+          .join(" | ")
+      : "Sin orden activo";
+    const sortUsage = "Click: combina criterios | Alt/Ctrl/Cmd+Click: solo esta columna";
+    pager.innerHTML = `
+      <div class="table-pager-meta">${fmtNum(totalRows)} filas | Pag ${pageState.current}/${totalPages}</div>
+      <div class="table-sort-hint">Orden: ${sortHint} · ${sortUsage}</div>
+      <div class="table-pager-controls">
+        <button type="button" data-action="clear-sort" ${sortState.rules.length ? "" : "disabled"}>Limpiar orden</button>
+        <button type="button" data-action="first" ${pageState.current === 1 ? "disabled" : ""}>«</button>
+        <button type="button" data-action="prev" ${pageState.current === 1 ? "disabled" : ""}>‹</button>
+        <button type="button" data-action="next" ${pageState.current === totalPages ? "disabled" : ""}>›</button>
+        <button type="button" data-action="last" ${pageState.current === totalPages ? "disabled" : ""}>»</button>
+      </div>
+    `;
 
     table.querySelectorAll("th.sortable").forEach((th) => {
-      th.addEventListener("click", () => {
+      th.addEventListener("click", (event) => {
         const idx = Number(th.dataset.colIndex);
-        if (sortState.index !== idx) {
-          sortState.index = idx;
-          sortState.direction = "desc";
-        } else {
-          sortState.direction = sortState.direction === "desc" ? "asc" : "desc";
+        const useSingleSort = event.altKey || event.ctrlKey || event.metaKey;
+        toggleRule(idx, !useSingleSort);
+        pageState.current = 1;
+        render();
+      });
+    });
+
+    pager.querySelectorAll("button[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.action;
+        if (action === "clear-sort") {
+          sortState.rules = [];
         }
+        if (action === "first") pageState.current = 1;
+        if (action === "prev") pageState.current = Math.max(1, pageState.current - 1);
+        if (action === "next") pageState.current = Math.min(totalPages, pageState.current + 1);
+        if (action === "last") pageState.current = totalPages;
         render();
       });
     });
@@ -275,35 +403,44 @@ function mountTables(data) {
         { label: "Visitas", value: (r) => r.visits, format: (v) => fmtNum(v) },
         { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
       ],
-      encounterRows.slice(0, 40),
+      encounterRows,
       1,
-      "desc"
+      "desc",
+      12
     );
 
     createTable(
       "cardTable",
       [
         { label: "Carta", value: (r) => r.name, format: (v) => v },
+        { label: "Ofrecida", value: (r) => r.offered, format: (v) => fmtNum(v) },
+        { label: "Elegida", value: (r) => r.picked, format: (v) => fmtNum(v) },
+        { label: "Pick Rate", value: (r) => r.pick_rate, format: (v) => fmtPct(v) },
         { label: "Runs", value: (r) => r.runs_with, format: (v) => fmtNum(v) },
         { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
         { label: "Copias avg", value: (r) => r.avg_copies, format: (v) => Number(v).toFixed(2) },
       ],
-      cardRows.slice(0, 40),
-      1,
-      "desc"
+      cardRows,
+      3,
+      "desc",
+      12
     );
 
     createTable(
       "relicTable",
       [
-        { label: "Reliquia", value: (r) => r.name, format: (v) => v },
+        { label: "Reliquia", value: (r) => r.name, format: renderRelicNameCell },
+        { label: "Ofrecida", value: (r) => r.offered, format: (v) => fmtNum(v) },
+        { label: "Elegida", value: (r) => r.picked, format: (v) => fmtNum(v) },
+        { label: "Pick Rate", value: (r) => r.pick_rate, format: (v) => fmtPct(v) },
         { label: "Runs", value: (r) => r.runs_with, format: (v) => fmtNum(v) },
         { label: "Winrate", value: (r) => r.win_rate, format: (v) => fmtPct(v) },
         { label: "Copias avg", value: (r) => r.avg_copies, format: (v) => Number(v).toFixed(2) },
       ],
-      relicRows.slice(0, 40),
-      1,
-      "desc"
+      relicRows,
+      3,
+      "desc",
+      12
     );
   };
 
@@ -316,7 +453,8 @@ function mountTables(data) {
     ],
     data.room_type_stats,
     1,
-    "desc"
+    "desc",
+    8
   );
 
   renderDetailTables("ALL");
@@ -335,9 +473,10 @@ function mountTables(data) {
       { label: "Win", value: (r) => (r.win ? 1 : 0), format: (v) => (v ? "YES" : "NO") },
       { label: "Killed By", value: (r) => r.killed_by_encounter_name || "-", format: (v) => v },
     ],
-    [...data.runs].reverse().slice(0, 40),
+    [...data.runs].reverse(),
     0,
-    "desc"
+    "desc",
+    15
   );
 }
 
